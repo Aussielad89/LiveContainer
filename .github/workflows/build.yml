@@ -3,6 +3,7 @@ name: Build Unsigned IPA
 on:
   push:
     branches: [ main ]
+  pull_request:
   workflow_dispatch:
 
 jobs:
@@ -14,28 +15,40 @@ jobs:
           submodules: recursive
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.2.app
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 
       - name: Build
         run: |
-          xcodebuild \
+          set -o pipefail
+          xcodebuild clean archive \
             -project LiveContainer.xcodeproj \
             -scheme LiveContainer \
             -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
+            -archivePath "$PWD/build/LiveContainer.xcarchive" \
+            -destination "generic/platform=iOS" \
             CODE_SIGN_IDENTITY="" \
-            ONLY_ACTIVE_ARCH=NO
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            ONLY_ACTIVE_ARCH=NO \
+            2>&1 | tee build-xcode.log
 
       - name: Package IPA
         run: |
+          set -o pipefail
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/LiveContainer.app Payload/
-          zip -r LiveContainer-unsigned.ipa Payload/
+          APP_PATH=$(find "$PWD/build/LiveContainer.xcarchive/Products/Applications" -maxdepth 1 -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: no .app found in archive" >&2
+            exit 1
+          fi
+          echo "Found app: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          zip -qr LiveContainer-unsigned.ipa Payload
+          rm -rf Payload
+          ls -lh LiveContainer-unsigned.ipa
 
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-ipa
           path: LiveContainer-unsigned.ipa
+          retention-days: 7
